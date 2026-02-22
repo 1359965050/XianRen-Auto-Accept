@@ -1,0 +1,53 @@
+{
+    "name": "xianren-auto-agent",
+    "displayName": "XianRen Auto Agent",
+    "description": "自动接受 AI Agent 的文件编辑、终端命令和重试提示。支持 Cursor 和 Antigravity。",
+    "version": "1.0.0",
+    "publisher": "local",
+    "license": "MIT",
+    "icon": "media/icon.png",
+    "categories": [
+        "Machine Learning",
+        "Other"
+    ],
+    "keywords": [
+        "antigravity",
+        "cursor",
+        "ai",
+        "auto-accept"
+    ],
+    "scripts": {
+        "compile": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --external:ws --platform=node --format=cjs",
+        "vscode:prepublish": "npm run compile",
+        "package": "npx -y @vscode/vsce package --allow-missing-repository"
+    },
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "dist/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "auto-accept.toggle",
+                "title": "XianRen: Toggle ON/OFF"
+            },
+            {
+                "command": "auto-accept.toggleBackground",
+                "title": "XianRen: Toggle Background Mode"
+            },
+            {
+                "command": "auto-accept.openSettings",
+                "title": "XianRen: Settings"
+            }
+        ]
+    },
+    "dependencies": {
+        "ws": "^8.13.0"
+    },
+    "devDependencies": {
+        "esbuild": "^0.27.3"
+    }
+}
