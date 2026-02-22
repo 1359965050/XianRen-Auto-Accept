@@ -32,7 +32,7 @@ class Relauncher {
         if (hasFlag) {
             this.log('CDP flag present but port inactive. Prompting for restart.');
             vscode.window.showWarningMessage(
-                `Auto Accept: The CDP flag is present, but the debugger port is not responding. Please completely close and restart ${ideName}.`,
+                `XianRen-Auto-Agent: The CDP flag is present, but the debugger port is not responding. Please completely close and restart ${ideName}.`,
                 'Restart Now'
             ).then(selection => {
                 if (selection === 'Restart Now') {
@@ -47,7 +47,7 @@ class Relauncher {
 
         if (!script) {
             vscode.window.showErrorMessage(
-                `Auto Accept: Unsupported platform. Please add --remote-debugging-port=9000 to your ${ideName} shortcut manually, then restart.`
+                `XianRen-Auto-Agent: Unsupported platform. Please add --remote-debugging-port=9000 to your ${ideName} shortcut manually, then restart.`
             );
             return { success: false, relaunched: false };
         }
@@ -74,7 +74,7 @@ class Relauncher {
     }
 
     async showFallbackNotification(script, ideName) {
-        const message = `Auto Accept: Click the button below to copy the setup script for ${ideName}.`;
+        const message = `XianRen-Auto-Agent: Click the button below to copy the setup script for ${ideName}.`;
         const copyButton = 'Copy Setup Script';
 
         const selection = await vscode.window.showInformationMessage(message, copyButton);

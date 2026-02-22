@@ -1,5 +1,5 @@
 /**
- * Auto Accept Agent - Combined Script
+ * XianRen-Auto-Agent - Combined Script
  *
  * Combines:
  * - simple_poll.js (button clicking, 300ms interval) - ALWAYS runs
@@ -51,12 +51,64 @@
     };
 
     // =================================================================
-    // SIMPLE POLL: NO-OP
-    // Command-based auto-accept runs from the extension (vscode.commands)
+    // SIMPLE POLL: BUTTON CLICKING
     // =================================================================
 
+    const ACCEPT_PATTERNS = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow'];
+    const REJECT_PATTERNS = ['skip', 'reject', 'cancel', 'close', 'refine', 'always run'];
+    const clickCooldowns = new WeakMap();
+    const CLICK_COOLDOWN_MS = 3000;
+
+    function isAcceptButton(el) {
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (text.length === 0 || text.length > 50) return false;
+
+        if (REJECT_PATTERNS.some(r => text.includes(r))) return false;
+        if (!ACCEPT_PATTERNS.some(p => text.includes(p))) return false;
+
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        if (!isVisible || style.pointerEvents === 'none' || el.disabled) return false;
+
+        // Check cooldown
+        const lastClick = clickCooldowns.get(el) || 0;
+        if (Date.now() - lastClick < CLICK_COOLDOWN_MS) return false;
+
+        return true;
+    }
+
     function clickAcceptButtons() {
-        return 0;
+        const selectors = [
+            '.bg-ide-button-background',
+            'button',
+            '[class*="button"]',
+            '[class*="anysphere"]'
+        ];
+
+        const found = [];
+        selectors.forEach(s => queryAll(s).forEach(el => found.push(el)));
+
+        let clicked = 0;
+        const uniqueFound = [...new Set(found)];
+
+        for (const el of uniqueFound) {
+            if (isAcceptButton(el)) {
+                const buttonText = (el.textContent || '').trim();
+                log(`Clicking: "${buttonText}"`);
+
+                clickCooldowns.set(el, Date.now());
+
+                el.dispatchEvent(new MouseEvent('click', {
+                    view: window,
+                    bubbles: true,
+                    cancelable: true
+                }));
+                clicked++;
+            }
+        }
+
+        return clicked;
     }
 
     // =================================================================

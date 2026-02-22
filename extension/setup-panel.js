@@ -14,7 +14,7 @@ class SetupPanel {
 
         const panel = vscode.window.createWebviewPanel(
             'autoAcceptSetup',
-            `Auto Accept: ${ideName} CDP Setup`,
+            `XianRen-Auto-Agent: ${ideName} CDP Setup`,
             column,
             {
                 enableScripts: true,
@@ -53,7 +53,7 @@ class SetupPanel {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto Accept CDP Setup</title>
+    <title>XianRen-Auto-Agent CDP Setup</title>
     <style>
         body {
             font-family: system-ui, -apple-system, sans-serif;

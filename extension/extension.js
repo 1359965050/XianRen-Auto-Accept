@@ -32,37 +32,88 @@ let statusBarItem;
 let statusSettingsItem;
 let statusBackgroundItem;
 let outputChannel;
-let currentIDE = 'unknown';
+let lastFocusTime = 0;
 let globalContext;
 
-// === IDE Accept Commands ===
-const ACCEPT_COMMANDS_ANTIGRAVITY = [
+// === IDE Accept Commands (verified from command discovery log) ===
+const SAFE_COMMANDS_ANTIGRAVITY = [
     'antigravity.agent.acceptAgentStep',
+    'antigravity.terminalCommand.accept',
+    'antigravity.terminalCommand.run',
     'antigravity.command.accept',
     'antigravity.prioritized.agentAcceptAllInFile',
     'antigravity.prioritized.agentAcceptFocusedHunk',
-    'antigravity.prioritized.supercompleteAccept',
-    'antigravity.terminalCommand.accept',
     'antigravity.acceptCompletion',
-    'antigravity.prioritized.terminalSuggestion.accept'
+    'antigravity.prioritized.supercompleteAccept'
 ];
 
-const ACCEPT_COMMANDS_CURSOR = [
+const SAFE_COMMANDS_CURSOR = [
     'cursorai.action.acceptAndRunGenerateInTerminal',
     'cursorai.action.acceptGenerateInTerminal'
 ];
 
-function getAcceptCommandsForIDE() {
-    const ide = (currentIDE || '').toLowerCase();
-    if (ide === 'antigravity') return ACCEPT_COMMANDS_ANTIGRAVITY;
-    if (ide === 'cursor') return ACCEPT_COMMANDS_CURSOR;
-    return [];
+let verifiedCommands = null; // Will be set after first verification run
+let firstRunLogged = false;
+
+async function discoverAcceptCommands() {
+    try {
+        const allCommands = await vscode.commands.getCommands(true);
+        const ide = (currentIDE || '').toLowerCase();
+        const prefix = ide === 'cursor' ? 'cursorai' : (ide === 'antigravity' ? 'antigravity' : '');
+
+        if (!prefix) {
+            log('Command discovery: Unknown IDE, skipping');
+            return;
+        }
+
+        // Verify which safe commands actually exist
+        const safeList = ide === 'antigravity' ? SAFE_COMMANDS_ANTIGRAVITY : SAFE_COMMANDS_CURSOR;
+        verifiedCommands = safeList.filter(cmd => allCommands.includes(cmd));
+
+        log(`Command discovery: Detected IDE = ${currentIDE}`);
+        log(`Command discovery: ${verifiedCommands.length}/${safeList.length} commands verified:`);
+        verifiedCommands.forEach(cmd => log(`  ✓ ${cmd}`));
+
+        const missing = safeList.filter(cmd => !allCommands.includes(cmd));
+        if (missing.length > 0) {
+            log(`Command discovery: missing commands:`);
+            missing.forEach(cmd => log(`  ✗ ${cmd}`));
+        }
+    } catch (e) {
+        log(`Command discovery failed: ${e.message}`);
+    }
 }
 
 async function executeAcceptCommandsForIDE() {
-    const commands = getAcceptCommandsForIDE();
-    if (commands.length === 0) return;
-    await Promise.allSettled(commands.map(cmd => vscode.commands.executeCommand(cmd)));
+    if (!verifiedCommands || verifiedCommands.length === 0) return;
+
+    // Focus the agent panel only if enough time has passed (e.g., 10 seconds)
+    // to avoid stealing focus too frequently while the user is typing.
+    const now = Date.now();
+    if (now - lastFocusTime > 10000) {
+        try {
+            await vscode.commands.executeCommand('antigravity.agentPanel.focus');
+            lastFocusTime = now;
+        } catch (e) { }
+    }
+
+    for (const cmd of verifiedCommands) {
+        try {
+            await vscode.commands.executeCommand(cmd);
+            if (!firstRunLogged) {
+                log(`  exec OK: ${cmd}`);
+            }
+        } catch (e) {
+            if (!firstRunLogged) {
+                log(`  exec FAIL: ${cmd} -> ${e.message}`);
+            }
+        }
+    }
+
+    if (!firstRunLogged) {
+        firstRunLogged = true;
+        log('First command execution cycle complete.');
+    }
 }
 
 // === CDP Handlers ===
@@ -74,6 +125,9 @@ function log(message) {
         const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
         const logLine = `[${timestamp}] ${message}`;
         console.log(logLine);
+        if (outputChannel) {
+            outputChannel.appendLine(logLine);
+        }
     } catch (e) {
         console.error('Logging failed:', e);
     }
@@ -173,6 +227,9 @@ async function activate(context) {
             vscode.window.showErrorMessage(`XianRen Error: ${err.message}`);
         }
 
+        // 3.5. Discover accept commands for current IDE
+        await discoverAcceptCommands();
+
         // 4. Update Status Bar
         updateStatusBar();
         log('Status bar updated with current state.');
@@ -192,6 +249,11 @@ async function activate(context) {
                 } else {
                     vscode.window.showErrorMessage('Failed to load Settings Panel.');
                 }
+            }),
+            vscode.commands.registerCommand('auto-accept.reset-cdp', async () => {
+                await context.globalState.update(CDP_SETUP_DONE_KEY, false);
+                vscode.window.showInformationMessage('XianRen: CDP Setup flag reset.');
+                log('CDP Setup flag reset by user command.');
             })
         );
 
@@ -200,6 +262,17 @@ async function activate(context) {
             await checkEnvironmentAndStart();
         } catch (err) {
             log(`Error in environment check: ${err.message}`);
+        }
+
+        // 7. Auto-setup CDP if not available (runs regardless of toggle state)
+        try {
+            const cdpOk = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
+            log(`Activation CDP check: ${cdpOk}`);
+            if (!cdpOk) {
+                await autoCDPSetup();
+            }
+        } catch (err) {
+            log(`AutoCDP activation error: ${err.message}`);
         }
 
         log('XianRen: Activation complete');
@@ -211,6 +284,8 @@ async function activate(context) {
 }
 
 // === CDP Environment ===
+const CDP_SETUP_DONE_KEY = 'auto-accept-cdp-setup-done';
+
 async function ensureCDPOrPrompt(showPrompt = false) {
     if (!cdpHandler) return false;
 
@@ -223,11 +298,125 @@ async function ensureCDPOrPrompt(showPrompt = false) {
         return true;
     } else {
         log('CDP not found on target ports (9000 +/- 3).');
-        if (showPrompt && relauncher) {
-            log('Initiating CDP setup flow...');
-            await relauncher.ensureCDPAndRelaunch();
-        }
         return false;
+    }
+}
+
+async function autoCDPSetup() {
+    if (!globalContext) return;
+
+    log('[AutoCDP] Entering autoCDPSetup...');
+
+    const os = require('os');
+    const fs = require('fs');
+    const path = require('path');
+
+    if (os.platform() !== 'win32') {
+        log('[AutoCDP] Non-Windows platform, skipping auto setup.');
+        return;
+    }
+
+    log('[AutoCDP] CDP not available and we are on Windows. Auto-configuring shortcuts...');
+
+    const ideName = 'Antigravity';
+    const script = `
+$WshShell = New-Object -ComObject WScript.Shell
+$searchLocations = @(
+    [Environment]::GetFolderPath('Desktop'),
+    "$env:USERPROFILE\\Desktop",
+    "$env:USERPROFILE\\OneDrive\\Desktop",
+    "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs",
+    "$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs",
+    "$env:USERPROFILE\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar"
+)
+$count = 0
+foreach ($location in $searchLocations) {
+    if (Test-Path $location) {
+        $shortcuts = Get-ChildItem -Path $location -Recurse -Filter "*.lnk" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*${ideName}*" }
+        foreach ($s in $shortcuts) {
+            try {
+                $sc = $WshShell.CreateShortcut($s.FullName)
+                if ($sc.Arguments -notmatch "remote-debugging-port") {
+                    $sc.Arguments = "--remote-debugging-port=9000 " + $sc.Arguments
+                    $sc.Save()
+                    $count++
+                }
+            } catch {}
+        }
+    }
+}
+Write-Output "DONE:$count"
+`;
+
+    const tempPs1 = path.join(os.tmpdir(), `antigravity_cdp_setup_${Date.now()}.ps1`);
+    try {
+        fs.writeFileSync(tempPs1, '\ufeff' + script, 'utf8'); // Add UTF8 BOM for PowerShell
+
+        const { execSync } = require('child_process');
+        const result = execSync(`powershell -ExecutionPolicy Bypass -NonInteractive -File "${tempPs1}"`, {
+            encoding: 'utf8',
+            timeout: 15000,
+            windowsHide: true
+        });
+
+        log(`[AutoCDP] Script result: ${result.trim()}`);
+
+        const match = result.match(/DONE:(\d+)/);
+        const modified = match ? parseInt(match[1], 10) : 0;
+
+        await globalContext.globalState.update(CDP_SETUP_DONE_KEY, true);
+
+        if (modified > 0) {
+            log(`[AutoCDP] Modified ${modified} shortcut(s). Prompting restart.`);
+            const choice = await vscode.window.showInformationMessage(
+                `XianRen-Auto-Agent: 已自动配置 ${modified} 个快捷方式。请重启 Antigravity 以激活自动点击功能。`,
+                '立即重启',
+                '稍后'
+            );
+            if (choice === '立即重启') {
+                vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+        } else {
+            log('[AutoCDP] No shortcuts found to modify. Trying to create one...');
+            const exePath = process.execPath;
+
+            const createScript = `
+$WshShell = New-Object -ComObject WScript.Shell
+$desktopPath = [Environment]::GetFolderPath('Desktop')
+$shortcutPath = Join-Path $desktopPath "${ideName}.lnk"
+if (-not (Test-Path $shortcutPath)) {
+    $shortcut = $WshShell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = "${exePath.replace(/\\/g, '\\\\')}"
+    $shortcut.Arguments = "--remote-debugging-port=9000"
+    $shortcut.Save()
+    Write-Output "CREATED"
+} else {
+    Write-Output "EXISTS"
+}
+`;
+            fs.writeFileSync(tempPs1, '\ufeff' + createScript, 'utf8');
+            const createResult = execSync(`powershell -ExecutionPolicy Bypass -NonInteractive -File "${tempPs1}"`, {
+                encoding: 'utf8',
+                timeout: 10000,
+                windowsHide: true
+            });
+
+            log(`[AutoCDP] Create shortcut result: ${createResult.trim()}`);
+
+            if (createResult.includes('CREATED')) {
+                await vscode.window.showInformationMessage(
+                    'XianRen-Auto-Agent: 已在桌面创建带调试参数的快捷方式。请用该快捷方式重启 Antigravity。',
+                    '知道了'
+                );
+            }
+        }
+    } catch (e) {
+        log(`[AutoCDP] Auto setup failed: ${e.message}`);
+    } finally {
+        if (fs.existsSync(tempPs1)) {
+            try { fs.unlinkSync(tempPs1); } catch { }
+        }
     }
 }
 
@@ -235,7 +424,10 @@ async function checkEnvironmentAndStart() {
     if (isEnabled) {
         log('Initializing XianRen environment...');
         await startPolling();
-        ensureCDPOrPrompt(false);
+        const cdpOk = await ensureCDPOrPrompt(false);
+        if (!cdpOk) {
+            await autoCDPSetup();
+        }
     }
     updateStatusBar();
 }
@@ -257,8 +449,11 @@ async function handleToggle(context) {
 
         if (isEnabled) {
             log('XianRen: Enabled');
-            startPolling();
-            ensureCDPOrPrompt(false);
+            await startPolling();
+            const cdpOk = await ensureCDPOrPrompt(false);
+            if (!cdpOk) {
+                await autoCDPSetup();
+            }
         } else {
             log('XianRen: Disabled');
             stopPolling().catch(() => { });
@@ -394,7 +589,7 @@ async function syncSessions() {
 async function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
     if (commandPollTimer) clearInterval(commandPollTimer);
-    log('Auto Accept: Monitoring session...');
+    log('XianRen-Auto-Agent: Monitoring session...');
 
     // Initial trigger
     await syncSessions();
@@ -423,7 +618,7 @@ async function stopPolling() {
         commandPollTimer = null;
     }
     if (cdpHandler) await cdpHandler.stop();
-    log('Auto Accept: Polling stopped');
+    log('XianRen-Auto-Agent: Polling stopped');
 }
 
 // === Away Actions ===
@@ -431,7 +626,7 @@ async function showAwayActionsNotification(context, actionsCount) {
     log(`[Notification] showAwayActionsNotification called with: ${actionsCount}`);
     if (!actionsCount || actionsCount === 0) return;
 
-    const message = `Auto Accept handled ${actionsCount} action${actionsCount > 1 ? 's' : ''} while you were away.`;
+    const message = `XianRen-Auto-Agent handled ${actionsCount} action${actionsCount > 1 ? 's' : ''} while you were away.`;
     vscode.window.showInformationMessage(message, 'OK');
 }
 
@@ -456,7 +651,7 @@ function updateStatusBar() {
 
     if (isEnabled) {
         let statusText = 'ON';
-        let tooltip = `Auto Accept is running.`;
+        let tooltip = `XianRen-Auto-Agent is running.`;
         let bgColor = undefined;
         let icon = '$(check)';
 
@@ -465,7 +660,7 @@ function updateStatusBar() {
             tooltip += ' (CDP Connected)';
         }
 
-        statusBarItem.text = `${icon} Auto Accept: ${statusText}`;
+        statusBarItem.text = `${icon} XianRen-Auto-Agent: ${statusText}`;
         statusBarItem.tooltip = tooltip;
         statusBarItem.backgroundColor = bgColor;
 
@@ -483,8 +678,8 @@ function updateStatusBar() {
             statusBackgroundItem.show();
         }
     } else {
-        statusBarItem.text = '$(circle-slash) Auto Accept: OFF';
-        statusBarItem.tooltip = 'Click to enable Auto Accept.';
+        statusBarItem.text = '$(circle-slash) XianRen-Auto-Agent: OFF';
+        statusBarItem.tooltip = 'Click to enable XianRen-Auto-Agent.';
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
 
         if (statusBackgroundItem) {

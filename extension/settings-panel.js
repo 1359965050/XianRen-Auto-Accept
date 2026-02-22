@@ -14,7 +14,7 @@ class SettingsPanel {
 
         const panel = vscode.window.createWebviewPanel(
             'autoAcceptSettings',
-            'Auto Accept: Settings',
+            'XianRen-Auto-Agent: Settings',
             column,
             {
                 enableScripts: true,
@@ -68,7 +68,7 @@ class SettingsPanel {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto Accept Settings</title>
+    <title>XianRen-Auto-Agent Settings</title>
     <style>
         body {
             font-family: system-ui, -apple-system, sans-serif;
@@ -175,14 +175,14 @@ class SettingsPanel {
     </style>
 </head>
 <body>
-    <h1>⚡ Auto Accept Settings</h1>
-    <p class="subtitle">Configure auto-accept behavior and safety settings.</p>
+    <h1>⚡ XianRen-Auto-Agent Settings</h1>
+    <p class="subtitle">Configure XianRen-Auto-Agent behavior and safety settings.</p>
 
     <div class="section">
         <div class="section-title">
             🔄 Poll Frequency
         </div>
-        <p class="section-desc">How often Auto Accept checks for accept buttons (lower = faster).</p>
+        <p class="section-desc">How often XianRen-Auto-Agent checks for accept buttons (lower = faster).</p>
         <label for="freqSlider">Frequency: <span id="freqValue">${pollFrequency}ms</span></label>
         <input type="range" id="freqSlider" min="100" max="2000" step="50" value="${pollFrequency}"
             oninput="document.getElementById('freqValue').textContent = this.value + 'ms'">
