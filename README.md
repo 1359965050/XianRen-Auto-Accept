@@ -1,4 +1,4 @@
-# Auto Accept Agent
+# XianRen Auto Agent
 
 自动接受 AI Agent 的文件编辑、终端命令和重试提示。支持 Antigravity 和 Cursor IDE。
 
