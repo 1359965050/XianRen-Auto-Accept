@@ -84,23 +84,40 @@
     const CLICK_COOLDOWN_MS = 3000;
 
     function isAcceptButton(el) {
-        let text = (el.textContent || '').trim().toLowerCase();
+        let rawText = (el.textContent || '').trim().toLowerCase();
 
         // Also check title attribute or aria-label if text is empty
-        if (!text) {
-            text = (el.getAttribute('title') || el.getAttribute('aria-label') || '').trim().toLowerCase();
+        if (!rawText) {
+            rawText = (el.getAttribute('title') || el.getAttribute('aria-label') || '').trim().toLowerCase();
         }
 
-        if (text.length === 0 || text.length > 50) return false;
+        if (rawText.length === 0 || rawText.length > 50) return false;
 
-        // Clean text: remove common shortcut suffixes like (ctrl+enter)
-        text = text.replace(/\s*\(.*\)$/, '').trim();
+        // Clean text:
+        let text = rawText.replace(/\s*\([^)]*\)$/, ''); // remove parentheses like (Ctrl+Enter)
+        text = text.replace(/\s*\(\d+\s*(of|\/)\s*\d+\)$/, ''); // remove count like (1 of 3)
+        text = text.replace(/\s+(alt|cmd|ctrl|shift|opt|win|enter|return|↵|\u21b5|\u23ce|⌘|⇧|⌥|⌃|\+)+$/i, ''); // remove separated hotkeys
+
+        // Antigravity specialized fix: It renders as <span>Run</span><span>Alt+↵</span> which becomes "runalt+↵" in textContent
+        text = text.replace(/(alt|cmd|ctrl|shift|opt|win|enter|return|↵|\u21b5|\u23ce|⌘|⇧|⌥|⌃|\+)+$/i, '');
+
+        text = text.trim();
 
         const customPatterns = window.__autoAcceptState?.customPatterns || [];
-        const allAcceptPatterns = [...ACCEPT_PATTERNS, ...customPatterns].filter(Boolean);
+        const allAcceptPatterns = [...ACCEPT_PATTERNS, ...customPatterns].filter(Boolean).map(p => p.toLowerCase());
+        const allRejectPatterns = REJECT_PATTERNS.map(p => p.toLowerCase());
 
-        if (REJECT_PATTERNS.some(r => text.includes(r))) return false;
-        if (!allAcceptPatterns.some(p => text.includes(p.toLowerCase()))) return false;
+        // structural exclusions
+        const role = el.getAttribute('role');
+        if (role === 'menuitem' || role === 'tab' || role === 'treeitem' || role === 'option' || role === 'checkbox') return false;
+        if (el.closest('.menubar, .activitybar, .titlebar, .monaco-menu')) return false;
+
+        // We reject if the EXACT text matches a reject word (or starts with it)
+        if (allRejectPatterns.some(r => text === r || text.startsWith(r + ' '))) return false;
+
+        // We STRICTLY REQUIRE an Exact Match for the accept words to avoid clicking "Run and Debug" when pattern is just "run"
+        const isMatched = allAcceptPatterns.some(p => text === p);
+        if (!isMatched) return false;
 
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();

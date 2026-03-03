@@ -6,22 +6,33 @@ const { SELECTORS } = require('./00_selectors');
 const { log, queryAll } = require('./01_utils');
 
 function isAcceptButton(el, customPatterns = []) {
-    let text = (el.textContent || '').trim().toLowerCase();
+    let rawText = (el.textContent || '').trim().toLowerCase();
 
     // Also check title attribute or aria-label if text is empty
-    if (!text) {
-        text = (el.getAttribute('title') || el.getAttribute('aria-label') || '').trim().toLowerCase();
+    if (!rawText) {
+        rawText = (el.getAttribute('title') || el.getAttribute('aria-label') || '').trim().toLowerCase();
     }
 
-    if (text.length === 0 || text.length > 50) return false;
+    if (rawText.length === 0 || rawText.length > 50) return false;
 
-    // Clean text: remove common shortcut suffixes like (ctrl+enter) or (cmd+enter)
-    text = text.replace(/\s*\(.*\)$/, '').trim();
+    // Clean text:
+    let text = rawText.replace(/\s*\([^)]*\)$/, ''); // remove parentheses like (Ctrl+Enter)
+    text = text.replace(/\s*\(\d+\s*(of|\/)\s*\d+\)$/, ''); // remove count like (1 of 3)
+    text = text.replace(/\s+(alt|cmd|ctrl|shift|opt|win|enter|return|↵|\u21b5|\u23ce|⌘|⇧|⌥|⌃|\+)+$/i, ''); // remove separated hotkeys
 
-    const allAcceptPatterns = [...SELECTORS.acceptPatterns, ...customPatterns].filter(Boolean);
+    // Antigravity specialized fix: It renders as <span>Run</span><span>Alt+↵</span> which becomes "runalt+↵" in textContent
+    text = text.replace(/(alt|cmd|ctrl|shift|opt|win|enter|return|↵|\u21b5|\u23ce|⌘|⇧|⌥|⌃|\+)+$/i, '');
 
-    if (SELECTORS.rejectPatterns.some(r => text.includes(r.toLowerCase()))) return false;
-    if (!allAcceptPatterns.some(p => text.includes(p.toLowerCase()))) return false;
+    text = text.trim();
+
+    const allAcceptPatterns = [...SELECTORS.acceptPatterns, ...customPatterns].filter(Boolean).map(p => p.toLowerCase());
+
+    // We reject if the EXACT exact matches a reject word (or starts with it, like "Cancel generation")
+    if (SELECTORS.rejectPatterns.some(r => text === r || text.startsWith(r + ' '))) return false;
+
+    // We STRICTLY REQUIRE an Exact Match for the accept words to avoid clicking "Run and Debug" when pattern is just "run"
+    const isMatched = allAcceptPatterns.some(p => text === p);
+    if (!isMatched) return false;
 
     const style = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
