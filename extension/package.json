@@ -2,7 +2,7 @@
     "name": "xianren-auto-agent",
     "displayName": "XianRen Auto Agent",
     "description": "自动接受 AI Agent 的文件编辑、终端命令和重试提示。支持 Cursor 和 Antigravity。",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "publisher": "local",
     "license": "MIT",
     "icon": "media/icon.png",
@@ -42,7 +42,29 @@
                 "command": "auto-accept.openSettings",
                 "title": "XianRen: Settings"
             }
-        ]
+        ],
+        "keybindings": [
+            {
+                "command": "auto-accept.toggle",
+                "key": "ctrl+alt+shift+r",
+                "mac": "cmd+alt+shift+r",
+                "when": "editorTextFocus"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "XianRen Auto Agent",
+            "properties": {
+                "auto-accept.customAcceptPatterns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "自定义自动点击的按钮文本 (Custom button texts to auto-click)."
+                }
+            }
+        }
     },
     "dependencies": {
         "ws": "^8.13.0"

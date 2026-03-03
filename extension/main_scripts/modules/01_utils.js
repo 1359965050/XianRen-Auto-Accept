@@ -22,12 +22,48 @@ const getDocuments = (root = document) => {
     return docs;
 };
 
-const queryAll = (selector) => {
+const queryAll = (selector, roots = [document]) => {
     const results = [];
-    getDocuments().forEach(doc => {
-        try { results.push(...Array.from(doc.querySelectorAll(selector))); } catch (e) { }
-    });
-    return results;
+
+    // Allow single root to be passed
+    const rootArray = Array.isArray(roots) ? roots : [roots];
+
+    const search = (node) => {
+        if (!node) return;
+
+        // 1. Search in current node
+        try {
+            if (node.querySelectorAll) {
+                results.push(...Array.from(node.querySelectorAll(selector)));
+            }
+        } catch (e) { }
+
+        // 2. Search in Shadow DOM
+        if (node.shadowRoot) {
+            search(node.shadowRoot);
+        }
+
+        // 3. Search in children for more Shadow Roots
+        if (node.children) {
+            for (const child of node.children) {
+                search(child);
+            }
+        }
+
+        // 4. Search in iframes (if this is document/iframeDoc)
+        try {
+            const iframes = node.querySelectorAll ? node.querySelectorAll('iframe, frame') : [];
+            for (const iframe of iframes) {
+                try {
+                    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                    if (iframeDoc) search(iframeDoc);
+                } catch (e) { }
+            }
+        } catch (e) { }
+    };
+
+    rootArray.forEach(root => search(root));
+    return [...new Set(results)]; // Deduplicate
 };
 
 const stripTimeSuffix = (text) => {

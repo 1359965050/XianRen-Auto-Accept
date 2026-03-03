@@ -3,12 +3,12 @@ const vscode = require('vscode');
 class SetupPanel {
     static currentPanel = null;
 
-    static createOrShow(extensionUri, script, platform, ideName) {
+    static createOrShow(extensionUri, script, platform, ideName, instructions = '') {
         const column = vscode.ViewColumn.One;
 
         if (SetupPanel.currentPanel) {
             SetupPanel.currentPanel._panel.reveal(column);
-            SetupPanel.currentPanel._update(script, platform, ideName);
+            SetupPanel.currentPanel._update(script, platform, ideName, instructions);
             return;
         }
 
@@ -22,12 +22,12 @@ class SetupPanel {
             }
         );
 
-        SetupPanel.currentPanel = new SetupPanel(panel, script, platform, ideName);
+        SetupPanel.currentPanel = new SetupPanel(panel, script, platform, ideName, instructions);
     }
 
-    constructor(panel, script, platform, ideName) {
+    constructor(panel, script, platform, ideName, instructions) {
         this._panel = panel;
-        this._update(script, platform, ideName);
+        this._update(script, platform, ideName, instructions);
 
         this._panel.onDidDispose(() => {
             SetupPanel.currentPanel = null;
@@ -43,7 +43,7 @@ class SetupPanel {
         });
     }
 
-    _update(script, platform, ideName) {
+    _update(script, platform, ideName, instructions) {
         const platformName = platform === 'win32' ? 'Windows (PowerShell)'
             : platform === 'darwin' ? 'macOS (Terminal)'
                 : 'Linux (Terminal)';
@@ -153,6 +153,7 @@ class SetupPanel {
     <h1>CDP Setup <span class="platform-badge">${platformName}</span></h1>
     <p class="subtitle">Enable Chrome DevTools Protocol to unlock Background Mode for ${ideName}.</p>
 
+    ${script ? `
     <div class="step">
         <span class="step-number">1</span>
         <span class="step-title">Copy the setup script</span>
@@ -160,6 +161,13 @@ class SetupPanel {
         <div class="script-box" id="scriptBox">${escapeHtml(script)}</div>
         <button class="btn btn-primary" onclick="copyScript()">📋 Copy Script</button>
     </div>
+    ` : `
+    <div class="step">
+        <span class="step-number">1</span>
+        <span class="step-title">Manual Setup</span>
+        <p class="step-desc">${instructions || 'Please add --remote-debugging-port=9000 to your launch arguments.'}</p>
+    </div>
+    `}
 
     <div class="step">
         <span class="step-number">2</span>

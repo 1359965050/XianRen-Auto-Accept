@@ -44,6 +44,11 @@ class SettingsPanel {
                     await vscode.commands.executeCommand('auto-accept.updateBannedCommands', message.value);
                     vscode.window.showInformationMessage(`Banned commands updated (${message.value.length} patterns)`);
                     break;
+                case 'updateCustomPatterns':
+                    const config = vscode.workspace.getConfiguration('auto-accept');
+                    await config.update('customAcceptPatterns', message.value, vscode.ConfigurationTarget.Global);
+                    vscode.window.showInformationMessage(`Custom patterns updated (${message.value.length} patterns)`);
+                    break;
                 case 'toggleBackground':
                     await vscode.commands.executeCommand('auto-accept.toggleBackground');
                     break;
@@ -62,6 +67,9 @@ class SettingsPanel {
         ]);
         const pollFrequency = context.globalState.get('auto-accept-poll-frequency', 300);
         const backgroundMode = context.globalState.get('auto-accept-background-mode', false);
+
+        const vscodeConfig = vscode.workspace.getConfiguration('auto-accept');
+        const customPatterns = vscodeConfig.get('customAcceptPatterns') || [];
 
         this._panel.webview.html = `<!DOCTYPE html>
 <html lang="en">
@@ -212,6 +220,15 @@ class SettingsPanel {
         <button class="btn btn-primary" onclick="updateBannedCommands()">Save</button>
     </div>
 
+    <div class="section">
+        <div class="section-title">
+            🎯 Custom Button Patterns
+        </div>
+        <p class="section-desc">Custom button texts to auto-click. One pattern per line.</p>
+        <textarea id="customPatterns">${customPatterns.join('\n')}</textarea>
+        <button class="btn btn-primary" onclick="updateCustomPatterns()">Save</button>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
 
@@ -222,8 +239,14 @@ class SettingsPanel {
 
         function updateBannedCommands() {
             const text = document.getElementById('bannedCommands').value;
-            const commands = text.split('\\n').map(l => l.trim()).filter(l => l.length > 0);
+            const commands = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
             vscode.postMessage({ command: 'updateBannedCommands', value: commands });
+        }
+
+        function updateCustomPatterns() {
+            const text = document.getElementById('customPatterns').value;
+            const patterns = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            vscode.postMessage({ command: 'updateCustomPatterns', value: patterns });
         }
 
         function toggleBackground() {

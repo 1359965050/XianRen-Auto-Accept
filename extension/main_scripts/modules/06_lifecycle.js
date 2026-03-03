@@ -30,6 +30,7 @@ function startSession(state, config) {
     state.sessionID++;
     state.mode = config.isBackgroundMode ? 'background' : 'simple';
     state.ide = (config.ide || 'cursor').toLowerCase();
+    state.customPatterns = config.customPatterns || [];
     state.tabNames = [];
     state.completionStatus = {};
     state._noTabCycles = 0;

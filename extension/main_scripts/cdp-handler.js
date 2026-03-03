@@ -53,6 +53,22 @@ class CDPHandler {
         this.log(`Scanning ports ${BASE_PORT - PORT_RANGE} to ${BASE_PORT + PORT_RANGE}...`);
         this.log(`Config: bg=${config.isBackgroundMode}, pro=${config.isPro}, ide=${config.ide}`);
 
+        // 优化点: 如果当前已经有活跃连接，我们不需要每 5 秒扫描所有的端口。
+        // 可以直接把当前的配置再次推给已经连接的页面，避免过多的 HTTP json/list 请求。
+        if (this.connections.size > 0) {
+            let activeConnections = 0;
+            for (const [id, conn] of this.connections) {
+                if (conn.ws.readyState === WebSocket.OPEN) {
+                    activeConnections++;
+                    await this._inject(id, config);
+                }
+            }
+            if (activeConnections > 0) {
+                this.log(`Skipped port scan because we already have ${activeConnections} active connections.`);
+                return;
+            }
+        }
+
         for (let port = BASE_PORT - PORT_RANGE; port <= BASE_PORT + PORT_RANGE; port++) {
             try {
                 const pages = await this._getPages(port);
@@ -149,7 +165,8 @@ class CDPHandler {
             if (conn.mode !== mode) {
                 const configJson = JSON.stringify({
                     ide: config.ide,
-                    isBackgroundMode: mode === 'background'
+                    isBackgroundMode: mode === 'background',
+                    customPatterns: config.customPatterns || []
                 });
                 this.log(`Calling __autoAcceptStart on ${id} with ${configJson}`);
                 await this._evaluate(id, `if(window.__autoAcceptStart) window.__autoAcceptStart(${configJson})`);

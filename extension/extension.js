@@ -230,7 +230,18 @@ async function activate(context) {
         // 3.5. Discover accept commands for current IDE
         await discoverAcceptCommands();
 
-        // 4. Update Status Bar
+        // 6. Listen for Configuration Changes
+        vscode.workspace.onDidChangeConfiguration(async e => {
+            if (e.affectsConfiguration('auto-accept.pollFrequency') ||
+                e.affectsConfiguration('auto-accept.customAcceptPatterns')) {
+                if (isEnabled) {
+                    log('Configuration changed, syncing sessions...');
+                    await syncSessions();
+                }
+            }
+        });
+
+        // 7. Update Status Bar
         updateStatusBar();
         log('Status bar updated with current state.');
 
@@ -249,11 +260,6 @@ async function activate(context) {
                 } else {
                     vscode.window.showErrorMessage('Failed to load Settings Panel.');
                 }
-            }),
-            vscode.commands.registerCommand('auto-accept.reset-cdp', async () => {
-                await context.globalState.update(CDP_SETUP_DONE_KEY, false);
-                vscode.window.showInformationMessage('XianRen: CDP Setup flag reset.');
-                log('CDP Setup flag reset by user command.');
             })
         );
 
@@ -269,7 +275,7 @@ async function activate(context) {
             const cdpOk = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
             log(`Activation CDP check: ${cdpOk}`);
             if (!cdpOk) {
-                await autoCDPSetup();
+                log('CDP not available. Background Mode will not function.');
             }
         } catch (err) {
             log(`AutoCDP activation error: ${err.message}`);
@@ -284,7 +290,6 @@ async function activate(context) {
 }
 
 // === CDP Environment ===
-const CDP_SETUP_DONE_KEY = 'auto-accept-cdp-setup-done';
 
 async function ensureCDPOrPrompt(showPrompt = false) {
     if (!cdpHandler) return false;
@@ -302,131 +307,14 @@ async function ensureCDPOrPrompt(showPrompt = false) {
     }
 }
 
-async function autoCDPSetup() {
-    if (!globalContext) return;
-
-    log('[AutoCDP] Entering autoCDPSetup...');
-
-    const os = require('os');
-    const fs = require('fs');
-    const path = require('path');
-
-    if (os.platform() !== 'win32') {
-        log('[AutoCDP] Non-Windows platform, skipping auto setup.');
-        return;
-    }
-
-    log('[AutoCDP] CDP not available and we are on Windows. Auto-configuring shortcuts...');
-
-    const ideName = 'Antigravity';
-    const script = `
-$WshShell = New-Object -ComObject WScript.Shell
-$searchLocations = @(
-    [Environment]::GetFolderPath('Desktop'),
-    "$env:USERPROFILE\\Desktop",
-    "$env:USERPROFILE\\OneDrive\\Desktop",
-    "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs",
-    "$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs",
-    "$env:USERPROFILE\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar"
-)
-$count = 0
-foreach ($location in $searchLocations) {
-    if (Test-Path $location) {
-        $shortcuts = Get-ChildItem -Path $location -Recurse -Filter "*.lnk" -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like "*${ideName}*" }
-        foreach ($s in $shortcuts) {
-            try {
-                $sc = $WshShell.CreateShortcut($s.FullName)
-                if ($sc.Arguments -notmatch "remote-debugging-port") {
-                    $sc.Arguments = "--remote-debugging-port=9000 " + $sc.Arguments
-                    $sc.Save()
-                    $count++
-                }
-            } catch {}
-        }
-    }
-}
-Write-Output "DONE:$count"
-`;
-
-    const tempPs1 = path.join(os.tmpdir(), `antigravity_cdp_setup_${Date.now()}.ps1`);
-    try {
-        fs.writeFileSync(tempPs1, '\ufeff' + script, 'utf8'); // Add UTF8 BOM for PowerShell
-
-        const { execSync } = require('child_process');
-        const result = execSync(`powershell -ExecutionPolicy Bypass -NonInteractive -File "${tempPs1}"`, {
-            encoding: 'utf8',
-            timeout: 15000,
-            windowsHide: true
-        });
-
-        log(`[AutoCDP] Script result: ${result.trim()}`);
-
-        const match = result.match(/DONE:(\d+)/);
-        const modified = match ? parseInt(match[1], 10) : 0;
-
-        await globalContext.globalState.update(CDP_SETUP_DONE_KEY, true);
-
-        if (modified > 0) {
-            log(`[AutoCDP] Modified ${modified} shortcut(s). Prompting restart.`);
-            const choice = await vscode.window.showInformationMessage(
-                `XianRen-Auto-Agent: 已自动配置 ${modified} 个快捷方式。请重启 Antigravity 以激活自动点击功能。`,
-                '立即重启',
-                '稍后'
-            );
-            if (choice === '立即重启') {
-                vscode.commands.executeCommand('workbench.action.reloadWindow');
-            }
-        } else {
-            log('[AutoCDP] No shortcuts found to modify. Trying to create one...');
-            const exePath = process.execPath;
-
-            const createScript = `
-$WshShell = New-Object -ComObject WScript.Shell
-$desktopPath = [Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktopPath "${ideName}.lnk"
-if (-not (Test-Path $shortcutPath)) {
-    $shortcut = $WshShell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = "${exePath.replace(/\\/g, '\\\\')}"
-    $shortcut.Arguments = "--remote-debugging-port=9000"
-    $shortcut.Save()
-    Write-Output "CREATED"
-} else {
-    Write-Output "EXISTS"
-}
-`;
-            fs.writeFileSync(tempPs1, '\ufeff' + createScript, 'utf8');
-            const createResult = execSync(`powershell -ExecutionPolicy Bypass -NonInteractive -File "${tempPs1}"`, {
-                encoding: 'utf8',
-                timeout: 10000,
-                windowsHide: true
-            });
-
-            log(`[AutoCDP] Create shortcut result: ${createResult.trim()}`);
-
-            if (createResult.includes('CREATED')) {
-                await vscode.window.showInformationMessage(
-                    'XianRen-Auto-Agent: 已在桌面创建带调试参数的快捷方式。请用该快捷方式重启 Antigravity。',
-                    '知道了'
-                );
-            }
-        }
-    } catch (e) {
-        log(`[AutoCDP] Auto setup failed: ${e.message}`);
-    } finally {
-        if (fs.existsSync(tempPs1)) {
-            try { fs.unlinkSync(tempPs1); } catch { }
-        }
-    }
-}
 
 async function checkEnvironmentAndStart() {
     if (isEnabled) {
         log('Initializing XianRen environment...');
         await startPolling();
-        const cdpOk = await ensureCDPOrPrompt(false);
+        const cdpOk = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
         if (!cdpOk) {
-            await autoCDPSetup();
+            log('CDP check failed on startup.');
         }
     }
     updateStatusBar();
@@ -450,9 +338,9 @@ async function handleToggle(context) {
         if (isEnabled) {
             log('XianRen: Enabled');
             await startPolling();
-            const cdpOk = await ensureCDPOrPrompt(false);
+            const cdpOk = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
             if (!cdpOk) {
-                await autoCDPSetup();
+                log('CDP check failed in handleToggle');
             }
         } else {
             log('XianRen: Disabled');
@@ -573,12 +461,16 @@ async function syncSessions() {
     if (cdpHandler) {
         log(`CDP: Syncing sessions (Mode: ${backgroundModeEnabled ? 'Background' : 'Simple'})...`);
         try {
+            const config = vscode.workspace.getConfiguration('auto-accept');
+            const customPatterns = config.get('customAcceptPatterns') || [];
+
             await cdpHandler.start({
                 isPro: true,
                 isBackgroundMode: backgroundModeEnabled,
                 pollInterval: pollFrequency,
                 ide: currentIDE,
-                bannedCommands: bannedCommands
+                bannedCommands: bannedCommands,
+                customPatterns: customPatterns
             });
         } catch (err) {
             log(`CDP: Sync error: ${err.message}`);

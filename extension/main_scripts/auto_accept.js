@@ -40,31 +40,67 @@
         return docs;
     };
 
-    const queryAll = (selector) => {
+    const queryAll = (selector, roots = [document]) => {
         const results = [];
-        getDocuments().forEach(doc => {
+
+        const rootArray = Array.isArray(roots) ? roots : [roots];
+
+        const search = (node) => {
+            if (!node) return;
             try {
-                results.push(...Array.from(doc.querySelectorAll(selector)));
+                if (node.querySelectorAll) {
+                    results.push(...Array.from(node.querySelectorAll(selector)));
+                }
             } catch (e) { }
-        });
-        return results;
+            if (node.shadowRoot) search(node.shadowRoot);
+            if (node.children) {
+                for (const child of node.children) search(child);
+            }
+            try {
+                const iframes = node.querySelectorAll ? node.querySelectorAll('iframe, frame') : [];
+                for (const iframe of iframes) {
+                    try {
+                        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                        if (iframeDoc) search(iframeDoc);
+                    } catch (e) { }
+                }
+            } catch (e) { }
+        };
+
+        rootArray.forEach(root => search(root));
+        return [...new Set(results)];
     };
 
     // =================================================================
     // SIMPLE POLL: BUTTON CLICKING
     // =================================================================
 
-    const ACCEPT_PATTERNS = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow'];
-    const REJECT_PATTERNS = ['skip', 'reject', 'cancel', 'close', 'refine', 'always run'];
+    const ACCEPT_PATTERNS = [
+        'accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow', 'continue',
+        '接受', '运行', '重试', '应用', '执行', '确认', '允许', '继续', '同意'
+    ];
+    const REJECT_PATTERNS = ['skip', 'reject', 'cancel', 'close', 'refine', 'always run', '跳过', '拒绝', '取消', '关闭'];
     const clickCooldowns = new WeakMap();
     const CLICK_COOLDOWN_MS = 3000;
 
     function isAcceptButton(el) {
-        const text = (el.textContent || '').trim().toLowerCase();
+        let text = (el.textContent || '').trim().toLowerCase();
+
+        // Also check title attribute or aria-label if text is empty
+        if (!text) {
+            text = (el.getAttribute('title') || el.getAttribute('aria-label') || '').trim().toLowerCase();
+        }
+
         if (text.length === 0 || text.length > 50) return false;
 
+        // Clean text: remove common shortcut suffixes like (ctrl+enter)
+        text = text.replace(/\s*\(.*\)$/, '').trim();
+
+        const customPatterns = window.__autoAcceptState?.customPatterns || [];
+        const allAcceptPatterns = [...ACCEPT_PATTERNS, ...customPatterns].filter(Boolean);
+
         if (REJECT_PATTERNS.some(r => text.includes(r))) return false;
-        if (!ACCEPT_PATTERNS.some(p => text.includes(p))) return false;
+        if (!allAcceptPatterns.some(p => text.includes(p.toLowerCase()))) return false;
 
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
@@ -78,6 +114,16 @@
         return true;
     }
 
+    // AI 面板选择器，用于挂载 overlay 等
+    const PANEL_SELECTORS = [
+        '#antigravity\\.agentPanel',
+        '#workbench\\.parts\\.auxiliarybar',
+        '.auxiliary-bar-container',
+        '#workbench\\.parts\\.sidebar',
+        '.monaco-editor',           // ADDED: Editor regions (inline chat)
+        '.monaco-workbench .part.editor' // ADDED: Workbench editor parts
+    ];
+
     function clickAcceptButtons() {
         const selectors = [
             '.bg-ide-button-background',
@@ -87,6 +133,7 @@
         ];
 
         const found = [];
+        // globally search all matching selectors via shadow dom piercing utils
         selectors.forEach(s => queryAll(s).forEach(el => found.push(el)));
 
         let clicked = 0;
@@ -94,22 +141,25 @@
 
         for (const el of uniqueFound) {
             if (isAcceptButton(el)) {
-                const buttonText = (el.textContent || '').trim();
+                const buttonText = (el.textContent || el.getAttribute('title') || el.getAttribute('aria-label') || '').trim();
                 log(`Clicking: "${buttonText}"`);
 
                 clickCooldowns.set(el, Date.now());
 
-                el.dispatchEvent(new MouseEvent('click', {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true
-                }));
+                // Dispatch full sequence of mouse/pointer events to ensure React/Solid triggers
+                el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+                el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+                el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+
                 clicked++;
             }
         }
 
         return clicked;
     }
+    // END clickAcceptButtons
 
     // =================================================================
     // BACKGROUND MODE: OVERLAY
@@ -133,6 +183,8 @@
             opacity: 0;
             transition: opacity 0.3s ease;
             overflow: hidden;
+            will-change: opacity, transform;
+            contain: strict;
         }
         #__autoAcceptBgOverlay.visible { opacity: 1; }
 
@@ -431,15 +483,17 @@
     // --- Compilation error detection ---
 
     function hasCompilationErrors() {
-        const errorBadges = queryAll('.codicon-error, .codicon-warning, [class*="marker-count"]');
+        // 优化点：缩小错误检测范围，排除全全局侧边栏报错，仅针对当前编辑器区域或者 Agent 面板内
+        const errorDecorations = queryAll('.monaco-editor .squiggly-error');
+        if (errorDecorations.length > 0) return true;
+
+        // 次要检查：只检查可见的 tabBar 或者编辑器内的 errorBadge
+        const errorBadges = queryAll('.monaco-editor .codicon-error, .monaco-workbench .part.editor .codicon-error');
         for (const badge of errorBadges) {
             const text = (badge.textContent || '').trim();
             const num = parseInt(text, 10);
             if (!isNaN(num) && num > 0) return true;
         }
-
-        const errorDecorations = queryAll('.squiggly-error, .monaco-editor .squiggly-error');
-        if (errorDecorations.length > 0) return true;
 
         return false;
     }
@@ -539,12 +593,14 @@
             const nt = queryAll(NEW_CONVERSATION_SELECTOR)[0];
             if (nt) nt.click();
 
-            // Step 2: Wait for panel to appear
-            await new Promise(r => setTimeout(r, 1500));
-            if (!isSessionActive(state, sessionID)) break;
-
-            // Step 3: Find tabs
-            const tabs = queryAll(ANTIGRAVITY_TAB_SELECTOR);
+            // 优化点: 动态等待 Tab 面板出现，最大等待 2.5 秒，每 200ms 检查一次
+            let tabs = [];
+            for (let i = 0; i < 12; i++) {
+                await new Promise(r => setTimeout(r, 200));
+                if (!isSessionActive(state, sessionID)) break;
+                tabs = queryAll(ANTIGRAVITY_TAB_SELECTOR);
+                if (tabs.length > 0) break;
+            }
 
             if (tabs.length === 0) {
                 state._noTabCycles++;
@@ -569,9 +625,11 @@
                 index++;
             }
 
-            // Step 5: Wait for tab content to load
-            await new Promise(r => setTimeout(r, 1500));
-            if (!isSessionActive(state, sessionID)) break;
+            // Step 5: Wait for tab content to load dynamically
+            for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 100));
+                if (!isSessionActive(state, sessionID)) break;
+            }
 
             // Step 6: Check for completion badges AFTER tab switch
             const allSpansAfter = queryAll('span');
@@ -642,6 +700,7 @@
         state.sessionID++;
         state.mode = config.isBackgroundMode ? 'background' : 'simple';
         state.ide = (config.ide || 'cursor').toLowerCase();
+        state.customPatterns = config.customPatterns || [];
         state.tabNames = [];
         state.completionStatus = {};
         state._noTabCycles = 0;

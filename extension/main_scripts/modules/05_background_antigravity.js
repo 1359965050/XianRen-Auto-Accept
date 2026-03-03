@@ -27,11 +27,14 @@ async function antigravityTabLoop(state, sessionID, updateTabNames, updateComple
         const nt = queryAll(SELECTORS.newConversation)[0];
         if (nt) nt.click();
 
-        await new Promise(r => setTimeout(r, 1500));
-        if (!(state.isRunning && state.sessionID === sessionID)) break;
-
-        // Find tabs
-        const tabs = queryAll(SELECTORS.antigravityTabs);
+        // 优化点: 动态等待 Tab 面板出现，最大等待 2.5 秒，每 200ms 检查一次
+        let tabs = [];
+        for (let i = 0; i < 12; i++) {
+            await new Promise(r => setTimeout(r, 200));
+            if (!(state.isRunning && state.sessionID === sessionID)) break;
+            tabs = queryAll(SELECTORS.antigravityTabs);
+            if (tabs.length > 0) break;
+        }
 
         if (tabs.length === 0) {
             state._noTabCycles++;
@@ -56,8 +59,11 @@ async function antigravityTabLoop(state, sessionID, updateTabNames, updateComple
             index++;
         }
 
-        await new Promise(r => setTimeout(r, 1500));
-        if (!(state.isRunning && state.sessionID === sessionID)) break;
+        // 优化点: 动态等待页面加载反馈或者最大超时
+        for (let i = 0; i < 15; i++) {
+            await new Promise(r => setTimeout(r, 100));
+            if (!(state.isRunning && state.sessionID === sessionID)) break;
+        }
 
         // Check for completion badges AFTER tab switch
         const allSpansAfter = queryAll(SELECTORS.badgeTag);

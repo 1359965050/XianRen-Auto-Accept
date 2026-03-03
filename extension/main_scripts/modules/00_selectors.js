@@ -11,7 +11,9 @@ const SELECTORS = {
         '#antigravity\\.agentPanel',
         '#workbench\\.parts\\.auxiliarybar',
         '.auxiliary-bar-container',
-        '#workbench\\.parts\\.sidebar'
+        '#workbench\\.parts\\.sidebar',
+        '.monaco-editor',           // ADDED: Editor regions (inline chat)
+        '.monaco-workbench .part.editor' // ADDED: Workbench editor parts
     ],
 
     // TAB NAVIGATION — CURSOR
@@ -44,16 +46,19 @@ const SELECTORS = {
     badgeTexts: ['Good', 'Bad'],
 
     // ERROR DETECTION
-    errorBadges: '.codicon-error, .codicon-warning, [class*="marker-count"]',
-    errorSquiggles: '.squiggly-error, .monaco-editor .squiggly-error',
+    errorBadges: '.monaco-editor .codicon-error, .monaco-workbench .part.editor .codicon-error',
+    errorSquiggles: '.monaco-editor .squiggly-error',
     errorSpanTexts: ['error', 'failed', 'compilation error'],
 
     // COMMAND CONTEXT
     commandElements: ['pre', 'code', 'pre code'],
 
     // BUTTON TEXT PATTERNS
-    acceptPatterns: ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow'],
-    rejectPatterns: ['skip', 'reject', 'cancel', 'close', 'refine']
+    acceptPatterns: [
+        'accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow', 'continue',
+        '接受', '运行', '重试', '应用', '执行', '确认', '允许', '继续', '同意'
+    ],
+    rejectPatterns: ['skip', 'reject', 'cancel', 'close', 'refine', '跳过', '拒绝', '取消', '关闭']
 };
 
 module.exports = { SELECTORS };
